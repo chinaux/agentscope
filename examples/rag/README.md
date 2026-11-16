@@ -7,7 +7,7 @@ Two library-mode walk-throughs of `agentscope.rag` — no FastAPI service, no ma
 | [`index_and_search.py`](./index_and_search.py) | The minimal pipeline: parse → chunk → embed → insert, then `KnowledgeBase.search`. Start here. |
 | [`integrate_with_agent.py`](./integrate_with_agent.py) | Attaches the same `KnowledgeBase` to an `Agent` via `RAGMiddleware`, in both `static` (auto-inject) and `agentic` (tool-driven) modes. |
 
-Both examples use an in-memory Qdrant store (`location=":memory:"`), so no external vector database is required. They use the DashScope `text-embedding-v4` model and require DashScope API access and a `DASHSCOPE_API_KEY`. The sections below show how to swap in Milvus Lite, MongoDB, or Elasticsearch instead; those backends need additional setup.
+Both examples use an in-memory Qdrant store (`location=":memory:"`), so no external vector database is required. They use the DashScope `text-embedding-v4` model and require DashScope API access and a `DASHSCOPE_API_KEY`. The sections below show how to swap in Milvus Lite, Zvec, MongoDB, or Elasticsearch instead; those backends need additional setup.
 
 ## Install
 
@@ -38,6 +38,55 @@ from agentscope.rag import MilvusLiteStore
 
 store = MilvusLiteStore(uri="./rag_demo.db")
 ```
+
+### Zvec (embedded, local persistence)
+
+To use [zvec](https://github.com/alibaba/zvec), an embedded vector
+database engine, instead of the in-memory Qdrant store, install the
+optional extra:
+
+```bash
+uv pip install "agentscope[vdb-zvec]"
+# Or from source (repo root)
+uv pip install -e ".[vdb-zvec]"
+```
+
+Then replace the vector store construction in `index_and_search.py`
+and/or `integrate_with_agent.py`:
+
+```python
+from agentscope.rag import ZvecStore
+
+# One directory per knowledge base is created under `path`.
+store = ZvecStore(path="./rag_demo_zvec")
+```
+
+**Notes**
+
+- zvec runs in-process and persists to local disk, so there is no
+  server to deploy or reach over the network. A collection is a
+  directory the native engine opens directly.
+- That directory is locked by the handle that opened it, so keep one
+  `ZvecStore` per `path` and share it. A second store on the same path
+  raises on first use.
+- `metadata_filter` needs no field declaration: every metadata pair is
+  indexed by an exact, type-sensitive digest, so
+  `search(..., metadata_filter={"tenant_id": "bank-a"})` works for any
+  key. Values are matched as JSON, so `{"year": 2020}` matches neither
+  `{"year": "2020"}` nor `{"year": 2020.0}`. A `set` or `frozenset`
+  is rejected: its iteration order differs between processes, so the
+  digest would not survive a restart.
+- `metric_type` accepts `"COSINE"` (default), `"IP"`, and `"L2"`,
+  case-insensitively. Scores are normalized to higher-is-better: cosine
+  similarity for `"COSINE"`, the inner product for `"IP"`, and the
+  negated squared distance for `"L2"`. The metric is fixed when the
+  collection is created, so opening it under a different one raises on
+  first use instead of applying the wrong formula. The collection still
+  counts as existing in that case, which keeps it deletable.
+- zvec logs to the console by default. Call
+  `zvec.init(log_level=zvec.LogLevel.ERROR)` once at process start,
+  before the first store is used, to change the verbosity or the log
+  destination.
 
 ### MongoDB Vector Search
 
@@ -228,12 +277,12 @@ store = ElasticsearchStore(
 
 ### Choosing a vector backend
 
-| | Qdrant (default) | Milvus Lite | MongoDB | Elasticsearch |
-| --- | --- | --- | --- | --- |
-| Install extra | `agentscope[vdb-qdrant]` | `agentscope[vdb-milvus]` | `agentscope[vdb-mongodb]` | `agentscope[vdb-elasticsearch]` |
-| External service | No | No | Yes | Yes |
-| Persistence | No (`:memory:`) | Yes (local `.db`) | Yes (server) | Yes (server) |
-| Best for | Quick start / tests | Local dev with persistence | Teams already on MongoDB | Teams already on Elastic or needing distributed kNN search |
+| | Qdrant (default) | Milvus Lite | Zvec | MongoDB | Elasticsearch |
+| --- | --- | --- | --- | --- | --- |
+| Install extra | `agentscope[vdb-qdrant]` | `agentscope[vdb-milvus]` | `agentscope[vdb-zvec]` | `agentscope[vdb-mongodb]` | `agentscope[vdb-elasticsearch]` |
+| External service | No | No | No | Yes | Yes |
+| Persistence | No (`:memory:`) | Yes (local `.db`) | Yes (one directory per collection) | Yes (server) | Yes (server) |
+| Best for | Quick start / tests | Local dev with persistence | Local dev with persistence and index-backed metadata filters | Teams already on MongoDB | Teams already on Elastic or needing distributed kNN search |
 
 `integrate_with_agent.py` additionally uses `DashScopeChatModel`, which is already in the base `agentscope` dependencies.
 

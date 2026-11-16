@@ -11,6 +11,7 @@ from ._qdrant import QdrantStore
 from ._mongodb import MongoDBStore
 from ._milvus_lite import MilvusLiteStore
 from ._elasticsearch import ElasticsearchStore
+from ._zvec import ZvecStore
 
 __all__ = [
     "DocumentSummary",
@@ -21,4 +22,5 @@ __all__ = [
     "VectorSearchResult",
     "QdrantStore",
     "MongoDBStore",
+    "ZvecStore",
 ]
